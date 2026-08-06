@@ -1,17 +1,16 @@
 # Argon NixOS home server
 
-Argon is a reproducible NixOS 26.05 configuration for a small home server. It
-runs file, photo, media, download, printing, VPN, and Python automation services
-for the `argon` user. Low idle power is a core design goal, without trading
-away storage integrity or unattended operation.
+Argon is a NixOS 26.05 configuration for a small home server (argon). It runs
+file, photo, document, music, book, download, printing, VPN, and Python
+automation services for the `argon` user.
 
 ## Hardware and storage
 
-| Device | Stable ID | Purpose |
-| --- | --- | --- |
+| Device                   | Stable ID                                       | Purpose                                                |
+| ------------------------ | ----------------------------------------------- | ------------------------------------------------------ |
 | 1 TB WD Black SN850 NVMe | `nvme-WD_BLACK_SN850_Heatsink_1TB_21490K485613` | NixOS, applications, databases, caches, and user state |
-| 2 TB Seagate HDD | `ata-ST2000VX017-3CV102_WWD1ZSNZ` | First RAID1 member |
-| 2 TB Seagate HDD | `ata-ST2000VX017-3CV102_WWD37CTW` | Second RAID1 member |
+| 2 TB Seagate HDD         | `ata-ST2000VX017-3CV102_WWD1ZSNZ`               | First RAID1 member                                     |
+| 2 TB Seagate HDD         | `ata-ST2000VX017-3CV102_WWD37CTW`               | Second RAID1 member                                    |
 
 The NVMe uses Btrfs subvolumes for `/`, `/nix`, `/var`, and `/home`. It is not
 encrypted, allowing the server to restart unattended after a power failure.
@@ -35,25 +34,27 @@ available to Immich and configured for Jellyfin Quick Sync transcoding.
 
 ## Services
 
-| Service | LAN or NetBird endpoint | Persistent data |
-| --- | --- | --- |
-| SSH | TCP 22 | NVMe |
-| Samba | `\\argon\files`, `\\argon\media` | RAID |
-| Immich | `http://argon:2283` | Photos on RAID; database and state on NVMe |
-| Jellyfin | `http://argon:8096` | Media on RAID; metadata and cache on NVMe |
-| qBittorrent | `http://argon:8080` | Downloads on RAID; configuration on NVMe |
-| CUPS | `http://argon:631` | Configuration and spool on NVMe |
-| NetBird | UDP 51820 | State on NVMe |
+| Service       | LAN or NetBird endpoint                             | Persistent data                               |
+| ------------- | --------------------------------------------------- | --------------------------------------------- |
+| SSH           | TCP 22                                              | NVMe                                          |
+| Samba         | `\\argon\files`, `\\argon\media`, `\\argon\library` | RAID                                          |
+| Immich        | `http://argon:2283`                                 | Photos on RAID; database and state on NVMe    |
+| Paperless-ngx | `http://argon:28981`                                | Documents on RAID; database and index on NVMe |
+| Jellyfin      | `http://argon:8096`                                 | Media on RAID; metadata and cache on NVMe     |
+| Navidrome     | `http://argon:4533`                                 | Music on RAID; database and cache on NVMe     |
+| Grimmory      | `http://argon:6060`                                 | Books on RAID; app and database on NVMe       |
+| qBittorrent   | `http://argon:8080`                                 | Downloads on RAID; configuration on NVMe      |
+| CUPS          | `http://argon:631`                                  | Configuration and spool on NVMe               |
+| NetBird       | UDP 51820                                           | State on NVMe                                 |
 
 Service storage uses separate Unix groups so each daemon only receives the
-access it needs. Immich and Jellyfin retain the upstream systemd hardening, with
-`PrivateUsers` disabled so their host storage groups and Arc render device stay
-visible. qBittorrent keeps `PrivateUsers` and runs with `downloads` as its
-primary group.
+access it needs. Native services retain their upstream systemd hardening; only
+the user namespace isolation that prevents required host group access is
+overridden. Grimmory is the exception to the native-service approach because it
+is distributed as a container.
 
 The listed application ports are open on the server's LAN and NetBird
-interfaces. Keep router ingress and port forwarding closed, including IPv6,
-unless public access is explicitly intended.
+interfaces.
 
 ## Installation
 
@@ -111,10 +112,13 @@ The next command erases that NVMe. Run it only after checking the ID above:
 
 ```sh
 cd /tmp/argon
-nix --extra-experimental-features "nix-command flakes" run \
-  .#disko -- \
-  --mode destroy,format,mount \
-  ./hosts/argon/disko.nix
+nix --extra-experimental-features "nix-command flakes" \
+    --option http-connections 1 \
+    --option download-attempts 15 \
+    --option http2 false \
+    run .#disko -- \
+    --mode destroy,format,mount \
+    ./hosts/argon/disko.nix
 findmnt -R /mnt
 ```
 
@@ -209,7 +213,10 @@ mkdir -p /mnt/etc/nixos
 rsync -a --delete /tmp/argon/ /mnt/etc/nixos/
 cd /mnt/etc/nixos
 test -f flake.lock
-nixos-install --flake .#argon
+nixos-install --flake .#argon \
+  --option http-connections 1 \
+  --option http2 false \
+  --option download-attempts 500
 ```
 
 The initial `argon` account is locked because no default password is stored in
@@ -258,8 +265,8 @@ Create Samba's separate password entry for `argon`:
 sudo smbpasswd -a argon
 ```
 
-The shares are `\\argon\files` and `\\argon\media`; the hostname can be
-replaced with a LAN or NetBird IP.
+The shares are `\\argon\files`, `\\argon\media`, and `\\argon\library`; replace
+the hostname with a LAN or NetBird IP if local name resolution is unavailable.
 
 ### Arc A380, Immich, and Jellyfin
 
@@ -287,12 +294,13 @@ seeded from the NixOS configuration. Confirm GPU use during a transcode with:
 sudo intel_gpu_top
 ```
 
-Immich's PostgreSQL database is dumped to
+The Immich and Paperless PostgreSQL databases are dumped to
 `/srv/storage/backups/postgresql` every day at 03:15. The current and previous
 dumps are retained.
 
 ```sh
 sudo systemctl status postgresqlBackup-immich.timer
+sudo systemctl status postgresqlBackup-paperless.timer
 sudo ls -lh /srv/storage/backups/postgresql
 ```
 
@@ -306,19 +314,111 @@ sudo journalctl -u qbittorrent -b | grep -i password
 ```
 
 Completed downloads go to `/srv/storage/downloads/complete`; incomplete ones go
-to `/srv/storage/downloads/incomplete`. Peer traffic uses TCP and UDP port
-52000.
+to `/srv/storage/downloads/incomplete`. Peer traffic uses TCP and UDP port 52000.
 
-### CUPS
+### Epson ET-3950 printing and scanning
 
-Open `http://argon:631`, authenticate as `argon`, add the printer, and mark it
-shared. Clients can use:
+The `Epson_ET_3950` CUPS queue is created automatically for the printer at
+`192.168.1.191`, uses driverless IPP Everywhere, defaults to A4, and is shared.
+Verify it after the first rebuild:
+
+```sh
+lpstat -t
+lpoptions -p Epson_ET_3950 -l
+printf 'Argon printer test\n' | lp -d Epson_ET_3950
+```
+
+Clients can use this queue directly:
 
 ```text
-ipp://argon:631/printers/PRINTER_NAME
+ipp://argon:631/printers/Epson_ET_3950
 ```
 
 Use the NetBird IP or DNS name instead of `argon` for remote printing.
+
+Scanning uses the open-source `sane-airscan` backend. Confirm that the ET-3950
+is discovered and inspect the exact source names exposed by its firmware:
+
+```sh
+airscan-discover
+scanimage -L
+scanimage --help --device-name 'airscan:DEVICE_NAME_FROM_SCANIMAGE_L'
+```
+
+Load pages into the ADF and submit them as one 300-DPI grayscale PDF. Paperless
+will pick it up and OCR it automatically:
+
+```sh
+sudo paperless-scan
+```
+
+Choose another source or color mode when needed:
+
+```sh
+sudo paperless-scan 'ADF Duplex'
+sudo paperless-scan Flatbed
+sudo env PAPERLESS_SCAN_MODE=Color paperless-scan
+```
+
+If the firmware reports a different source name, pass that exact name as the
+first argument. An exact SANE device name can be supplied as the second argument
+when more than one scanner is present.
+
+The ET-3950 control panel offers scan-to-computer/cloud/WSD, but not SMB or FTP
+scan-to-folder. It therefore cannot send directly to Paperless from the panel
+using an open protocol. `paperless-scan` is the local bridge: it drives the
+scanner over eSCL and places the completed PDF in Paperless's consume directory.
+
+### Paperless-ngx
+
+Create the first administrator, then open `http://argon:28981`:
+
+```sh
+sudo paperless-manage createsuperuser
+```
+
+Original documents are stored under `/srv/storage/documents/paperless`; the
+database and search index stay on NVMe. OCR recognizes German and English and
+runs one low-priority worker to avoid competing with interactive services.
+
+### Navidrome
+
+Put music in `/srv/storage/media/music` through the `\\argon\media` share, then
+open `http://argon:4533` and create the first administrator. Navidrome scans at
+startup and watches for later file changes; no periodic full-library scan is
+scheduled. Seven daily database backups are kept in
+`/srv/storage/backups/navidrome`.
+
+### Grimmory
+
+Grimmory needs two root-only environment files. Generate matching application
+and database passwords on the server; do not add these files to Git:
+
+```sh
+sudo install -d -m 0700 /var/lib/argon-secrets
+db_password="$(head -c 32 /dev/urandom | base64)"
+root_password="$(head -c 32 /dev/urandom | base64)"
+
+sudo install -m 0600 /dev/null /var/lib/argon-secrets/grimmory-app.env
+printf 'DATABASE_PASSWORD=%s\n' "$db_password" \
+  | sudo tee /var/lib/argon-secrets/grimmory-app.env >/dev/null
+
+sudo install -m 0600 /dev/null /var/lib/argon-secrets/grimmory-db.env
+printf 'MYSQL_PASSWORD=%s\nMYSQL_ROOT_PASSWORD=%s\n' \
+  "$db_password" "$root_password" \
+  | sudo tee /var/lib/argon-secrets/grimmory-db.env >/dev/null
+unset db_password root_password
+
+sudo systemctl restart podman-grimmory.service
+sudo systemctl status podman-grimmory-db.service podman-grimmory.service
+```
+
+The first start pulls the pinned Grimmory and MariaDB images. Open
+`http://argon:6060`, create the administrator, then create a library rooted at
+`/books`. Files copied to `\\argon\library\bookdrop` appear inside Grimmory at
+`/bookdrop`. The application and MariaDB state live in `/var/lib/grimmory`; a
+compressed database dump is kept for seven days under
+`/srv/storage/backups/grimmory`.
 
 ## Python automations
 
@@ -334,9 +434,7 @@ sudo journalctl -u argon-automation@hello.service
 ```
 
 To schedule an automation, add a timer using the example in
-`hosts/argon/local.nix`, then rebuild. That file is also the place for SSH public
-keys and host-specific overrides. Keep passwords, tokens, and private keys out
-of Nix expressions because Nix store contents are readable by local users.
+`hosts/argon/local.nix`, then rebuild.
 
 ## Power policy
 
@@ -345,6 +443,12 @@ deep CPU idle states, supported PCIe ASPM, Powertop tuning, SATA link power
 management, audio power saving, periodic SSD trim, and zram. It does not enable
 `pcie_aspm=force` or HDD spindown by default because both need hardware-specific
 testing.
+
+CUPS starts on demand, Navidrome uses file events rather than timed scans, and
+Paperless OCR and overnight backups use low I/O priority. Grimmory and its
+MariaDB container add the largest always-on memory footprint, but should be
+CPU-idle when unused. Stop `podman-grimmory.service` and
+`podman-grimmory-db.service` if that library is only needed occasionally.
 
 After RAID synchronization and media indexing settle, measure the idle system:
 
@@ -362,12 +466,84 @@ counts before enabling it. If Powertop tuning causes device instability, disable
 
 ## Maintenance
 
-### Rebuild and update
+### Test and apply configuration changes
+
+Work from the configuration installed on the server. A tmux session lets a
+rebuild continue if SSH disconnects:
 
 ```sh
+ssh argon@argon
 cd /etc/nixos
+tmux new -s nixos-change
+git status --short
+git diff
+```
+
+Modified tracked files are available to the flake immediately. Git-backed
+flakes ignore new, untracked files, so stage any new module before evaluating:
+
+```sh
+git add path/to/new-file.nix
+```
+
+Build the complete system without activating it, then preview the activation:
+
+```sh
+sudo nixos-rebuild build --flake .#argon
+sudo nixos-rebuild dry-activate --flake .#argon
+```
+
+Temporarily activate the result:
+
+```sh
+sudo nixos-rebuild test --flake .#argon
+```
+
+`test` changes the running system without making it the boot default. A reboot
+returns to the last persistent generation. Keep local-console access available
+when testing SSH, firewall, networkd, or NetBird changes.
+
+Check the system and any service affected by the change:
+
+```sh
+sudo systemctl --failed
+sudo journalctl -b -p warning
+findmnt /srv/storage
+cat /proc/mdstat
+netbird status
+
+# Example for a changed service:
+sudo systemctl status jellyfin
+sudo journalctl -u jellyfin -b
+```
+
+Once the temporary configuration works, activate it and make it the default for
+future boots:
+
+```sh
 sudo nixos-rebuild switch --flake .#argon
 ```
+
+For a kernel, initrd, or bootloader change, install it as the next boot default
+without changing the running system, then reboot:
+
+```sh
+sudo nixos-rebuild boot --flake .#argon
+sudo reboot
+```
+
+Roll back the latest persistent switch with:
+
+```sh
+sudo nixos-rebuild switch --rollback
+```
+
+Previous generations also remain available from the systemd-boot menu. Normal
+`nixos-rebuild` commands do not repartition the NVMe or create the HDD RAID.
+Never use the installation-time disko `destroy,format,mount` command for a
+routine configuration change.
+
+### Update pinned inputs
 
 Update deliberately and review the NixOS release notes first:
 
@@ -409,11 +585,23 @@ state will be copied:
 
 ```sh
 sudo systemctl start postgresqlBackup-immich.service
-sudo systemctl status postgresqlBackup-immich.service
+sudo systemctl start postgresqlBackup-paperless.service
+sudo systemctl start grimmory-backup.service
+sudo systemctl status \
+  postgresqlBackup-immich.service \
+  postgresqlBackup-paperless.service \
+  grimmory-backup.service
 sudo systemctl stop \
   immich-server.service \
   immich-machine-learning.service \
+  paperless-scheduler.service \
+  paperless-consumer.service \
+  paperless-task-queue.service \
+  paperless-web.service \
   jellyfin.service \
+  navidrome.service \
+  podman-grimmory.service \
+  podman-grimmory-db.service \
   qbittorrent.service \
   cups.service \
   samba-smbd.service
@@ -435,8 +623,12 @@ sudo rsync -aHAXR --numeric-ids --ignore-missing-args \
   /./etc/nixos \
   /./home/argon/automation \
   /./var/lib/immich \
+  /./var/lib/paperless \
   /./var/lib/jellyfin \
   /./var/cache/jellyfin \
+  /./var/lib/navidrome \
+  /./var/lib/grimmory \
+  /./var/lib/argon-secrets \
   /./var/lib/qBittorrent \
   /./var/lib/cups \
   /./var/cache/cups \
@@ -447,8 +639,9 @@ sudo rsync -aHAXR --numeric-ids --ignore-missing-args \
 ```
 
 Restart the stopped services if the old installation will remain online.
-Restore Immich from its logical PostgreSQL dump; restore other state directories
-only while their services are stopped.
+Restore Immich and Paperless from their logical PostgreSQL dumps. Restore other
+state directories only while their services are stopped. The copied
+`argon-secrets` directory contains credentials and must remain root-only.
 
 `restic` and `rclone` are installed for a future off-site backup, but no remote,
 credentials, schedule, or retention policy is configured yet. At minimum, back
@@ -457,18 +650,25 @@ NVMe service configuration, then test restores.
 
 ## Repository map
 
-| Path | Role |
-| --- | --- |
-| `flake.nix` | Inputs and `argon` host definition |
-| `hosts/argon/disko.nix` | Destructive NVMe layout; never contains the HDDs |
-| `hosts/argon/storage.nix` | Non-destructive RAID mount, permissions, and health jobs |
-| `hosts/argon/services.nix` | Applications and automation runner |
-| `hosts/argon/hardware.nix` | Intel CPU and Arc A380 support |
-| `hosts/argon/local.nix` | Host-specific examples and overrides |
-| `modules/power.nix` | Low-power policy |
-| `scripts/create-data-raid.sh` | Guarded, one-time RAID1 creation |
+| Path                          | Role                                                     |
+| ----------------------------- | -------------------------------------------------------- |
+| `flake.nix`                   | Inputs and `argon` host definition                       |
+| `hosts/argon/disko.nix`       | Destructive NVMe layout; never contains the HDDs         |
+| `hosts/argon/storage.nix`     | Non-destructive RAID mount, permissions, and health jobs |
+| `hosts/argon/services.nix`    | Core applications and automation runner                  |
+| `hosts/argon/documents.nix`   | Paperless-ngx and document ingestion                     |
+| `hosts/argon/library.nix`     | Navidrome and Grimmory                                   |
+| `hosts/argon/printing.nix`    | Epson printer and network scanner                        |
+| `hosts/argon/hardware.nix`    | Intel CPU and Arc A380 support                           |
+| `hosts/argon/local.nix`       | Host-specific examples and overrides                     |
+| `modules/power.nix`           | Low-power policy                                         |
+| `scripts/paperless-scan.sh`   | Scan-to-Paperless workflow                               |
+| `scripts/create-data-raid.sh` | Guarded, one-time RAID1 creation                         |
 
 Further reading: [NixOS manual](https://nixos.org/manual/nixos/stable/),
 [disko](https://github.com/nix-community/disko),
 [NetBird](https://docs.netbird.io/), [Immich](https://immich.app/docs/), and
-[Jellyfin Intel acceleration](https://jellyfin.org/docs/general/post-install/transcoding/hardware-acceleration/intel/).
+[Jellyfin Intel acceleration](https://jellyfin.org/docs/general/post-install/transcoding/hardware-acceleration/intel/),
+[Paperless-ngx](https://docs.paperless-ngx.com/),
+[Navidrome](https://www.navidrome.org/docs/), and
+[Grimmory](https://grimmory.org/docs/).

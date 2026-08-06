@@ -37,7 +37,7 @@ in
   };
 
   # Separate groups keep services from modifying unrelated data. Argon owns
-  # the NAS trees; Jellyfin receives group-read access to media only.
+  # the shared trees; daemons receive access only to their own subtree.
   systemd.tmpfiles.rules = [
     "d /srv/storage 0755 root root -"
     "d /srv/storage/files 2770 argon nas -"
@@ -45,6 +45,9 @@ in
     # Match the Immich module's privacy-preserving ownership and mode.
     "d /srv/storage/photos/immich 0700 immich immich -"
     "d /srv/storage/media 2750 argon media -"
+    "d /srv/storage/media/music 2750 argon media -"
+    # Paperless owns the private document directories created by its module.
+    "d /srv/storage/documents 0755 root root -"
     "d /srv/storage/downloads 2770 qbittorrent downloads -"
     "d /srv/storage/downloads/complete 2770 qbittorrent downloads -"
     "d /srv/storage/downloads/incomplete 2770 qbittorrent downloads -"

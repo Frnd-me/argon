@@ -5,6 +5,9 @@
     ./hardware.nix
     ./storage.nix
     ./services.nix
+    ./documents.nix
+    ./library.nix
+    ./printing.nix
     ./local.nix
 
     # Reusable system policy shared independently of the physical host.

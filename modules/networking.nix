@@ -20,8 +20,11 @@
         445 # SMB
         631 # CUPS / IPP
         2283 # Immich
+        4533 # Navidrome
+        6060 # Grimmory
         8096 # Jellyfin
         8080 # qBittorrent Web UI
+        28981 # Paperless-ngx
         52000 # BitTorrent peer TCP
       ];
       allowedUDPPorts = [

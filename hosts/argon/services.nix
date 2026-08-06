@@ -95,6 +95,18 @@ in
         "create mask" = "0640";
         "directory mask" = "0750";
       };
+
+      # Grimmory gets a separate share so its writable library does not grant
+      # the container access to Jellyfin and Navidrome media.
+      library = {
+        path = "/srv/storage/library";
+        browseable = "yes";
+        "read only" = "no";
+        "valid users" = "argon";
+        "force group" = "grimmory";
+        "create mask" = "0660";
+        "directory mask" = "0770";
+      };
     };
   };
 
@@ -146,29 +158,14 @@ in
     extraArgs = [ "--confirm-legal-notice" ];
   };
 
-  # Socket activation avoids running CUPS until a local or remote client uses
-  # it, which suits an otherwise idle low-power server.
-  services.printing = {
-    enable = true;
-    browsed.enable = false;
-    startWhenNeeded = true;
-    listenAddresses = [ "*:631" ];
-    allowFrom = [ "all" ];
-    browsing = true;
-    defaultShared = true;
-    webInterface = true;
-    openFirewall = false;
-    drivers = with pkgs; [
-      gutenprint
-      hplip
-    ];
-  };
-
-  # Keep a restorable Immich database dump on storage that survives an NVMe
-  # reinstall. The upstream module rotates the previous dump automatically.
+  # Keep restorable database dumps on storage that survives an NVMe reinstall.
+  # The upstream module rotates the previous dump automatically.
   services.postgresqlBackup = {
     enable = true;
-    databases = [ "immich" ];
+    databases = [
+      "immich"
+      "paperless"
+    ];
     location = "/srv/storage/backups/postgresql";
     compression = "zstd";
     compressionLevel = 6;
@@ -206,6 +203,7 @@ in
     };
     samba-smbd.unitConfig.RequiresMountsFor = [ "/srv/storage" ];
     "postgresqlBackup-immich".unitConfig.RequiresMountsFor = [ "/srv/storage" ];
+    "postgresqlBackup-paperless".unitConfig.RequiresMountsFor = [ "/srv/storage" ];
 
     # Each automation gets a read-only host view plus explicit writable paths.
     "argon-automation@" = {
