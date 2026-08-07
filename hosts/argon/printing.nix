@@ -41,6 +41,13 @@ in
     ];
   };
 
+  # IPP Everywhere queue creation queries the physical printer. The upstream
+  # unit waits for CUPS; also wait until networkd has a routable connection.
+  systemd.services.ensure-printers = {
+    wants = [ "network-online.target" ];
+    after = [ "network-online.target" ];
+  };
+
   # sane-airscan discovers the scanner's open eSCL interface over mDNS. Avoid
   # loading SANE's second eSCL implementation, which can duplicate devices.
   hardware.sane = {

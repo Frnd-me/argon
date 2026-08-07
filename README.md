@@ -114,7 +114,7 @@ The next command erases that NVMe. Run it only after checking the ID above:
 cd /tmp/argon
 nix --extra-experimental-features "nix-command flakes" \
     --option http-connections 1 \
-    --option download-attempts 15 \
+    --option download-attempts 500 \
     --option http2 false \
     run .#disko -- \
     --mode destroy,format,mount \
