@@ -1,8 +1,8 @@
 { lib, pkgs, ... }:
 let
-  # Verify the correct render node after installation. With both the i3-10100
-  # iGPU and Arc A380 present, the Arc card is not guaranteed to be renderD128.
-  mediaGpu = "/dev/dri/argon-arc";
+  # Use the stable udev link for the i3-9100T's integrated UHD 630 rather than
+  # relying on a renderD number that can change when hardware is added.
+  mediaGpu = "/dev/dri/argon-igpu";
 
   qbitInitialConfig = pkgs.writeText "argon-qbittorrent-initial.conf" ''
     [BitTorrent]
@@ -139,12 +139,9 @@ in
         hevc = true;
         hevc10bit = true;
         vp9 = true;
-        av1 = true;
       };
-      hardwareEncodingCodecs = {
-        hevc = true;
-        av1 = true;
-      };
+      # UHD 630 supports HEVC encoding, but has no AV1 hardware codec.
+      hardwareEncodingCodecs.hevc = true;
     };
   };
 

@@ -1,8 +1,8 @@
 { lib, pkgs, ... }:
 {
-  # Conservative idle-power policy for the i3-10100, SATA mirror, NVMe, and Arc
-  # A380. These settings use advertised hardware capabilities and never force
-  # unsupported PCIe power states.
+  # Conservative idle-power policy for the i3-9100T, Topton C246 board, SATA
+  # mirror, NVMe, and integrated GPU. These settings use advertised hardware
+  # capabilities and never force unsupported PCIe power states.
   powerManagement = {
     enable = true;
     # With active intel_pstate, "powersave" remains demand-responsive; it does

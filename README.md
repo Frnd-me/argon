@@ -1,94 +1,55 @@
 # Argon NixOS home server
 
-Argon is a NixOS 26.05 configuration for a small home server (argon). It runs
-file, photo, document, music, book, download, printing, VPN, and Python
-automation services for the `argon` user.
+Argon is a low-power home server built around a Topton C246 motherboard, an
+Intel Core i3-9100T, its UHD 630 integrated GPU, one NVMe system disk, and two
+mirrored HDDs.
 
-## Hardware and storage
+## Storage
 
-| Device                   | Stable ID                                       | Purpose                                                |
-| ------------------------ | ----------------------------------------------- | ------------------------------------------------------ |
-| 1 TB WD Black SN850 NVMe | `nvme-WD_BLACK_SN850_Heatsink_1TB_21490K485613` | NixOS, applications, databases, caches, and user state |
-| 2 TB Seagate HDD         | `ata-ST2000VX017-3CV102_WWD1ZSNZ`               | First RAID1 member                                     |
-| 2 TB Seagate HDD         | `ata-ST2000VX017-3CV102_WWD37CTW`               | Second RAID1 member                                    |
+| Device                   | Stable ID                                       | Use                         |
+| ------------------------ | ----------------------------------------------- | --------------------------- |
+| 1 TB WD Black SN850 NVMe | `nvme-WD_BLACK_SN850_Heatsink_1TB_21490K485613` | NixOS and application state |
+| 2 TB Seagate HDD         | `ata-ST2000VX017-3CV102_WWD1ZSNZ`               | RAID1 member                |
+| 2 TB Seagate HDD         | `ata-ST2000VX017-3CV102_WWD37CTW`               | RAID1 member                |
 
-The NVMe uses Btrfs subvolumes for `/`, `/nix`, `/var`, and `/home`. It is not
-encrypted, allowing the server to restart unattended after a power failure.
+`hosts/argon/disko.nix` manages only the NVMe. The HDDs form an mdadm RAID1
+with an ext4 filesystem labelled `ARGON_DATA`, mounted at `/srv/storage` by
+`hosts/argon/storage.nix`. `nixos-install`, boot, and rebuild operations do not
+create or format the RAID.
 
-The two HDDs form an mdadm RAID1 with an ext4 filesystem labelled
-`ARGON_DATA`, mounted at `/srv/storage`. This provides about 2 TB of usable,
-mirrored storage. The RAID and OS disk are deliberately independent:
-
-- `hosts/argon/disko.nix` manages only the NVMe.
-- Normal boots assemble the existing RAID and mount it by filesystem label.
-- `nixos-rebuild` never creates or formats the RAID.
-- `scripts/create-data-raid.sh` is the only RAID creation path.
-
-This separation lets the NVMe be reinstalled without formatting the HDDs.
-RAID1 protects against one failed disk; it does not replace a backup. Service
-databases and metadata under `/var` are also lost when the NVMe is erased unless
-they are backed up first.
-
-The host uses an Intel Core i3-10100 and Intel Arc A380. The Arc render node is
-available to Immich and configured for Jellyfin Quick Sync transcoding.
+The unencrypted NVMe can boot unattended. Erasing it also erases databases and
+other state under `/var`, so copy anything needed before reinstalling. RAID1
+survives one disk failure but is not a backup.
 
 ## Services
 
-| Service       | LAN or NetBird endpoint                             | Persistent data                               |
-| ------------- | --------------------------------------------------- | --------------------------------------------- |
-| SSH           | TCP 22                                              | NVMe                                          |
-| Samba         | `\\argon\files`, `\\argon\media`, `\\argon\library` | RAID                                          |
-| Immich        | `http://argon:2283`                                 | Photos on RAID; database and state on NVMe    |
-| Paperless-ngx | `http://argon:28981`                                | Documents on RAID; database and index on NVMe |
-| Jellyfin      | `http://argon:8096`                                 | Media on RAID; metadata and cache on NVMe     |
-| Navidrome     | `http://argon:4533`                                 | Music on RAID; database and cache on NVMe     |
-| Grimmory      | `http://argon:6060`                                 | Books on RAID; app and database on NVMe       |
-| qBittorrent   | `http://argon:8080`                                 | Downloads on RAID; configuration on NVMe      |
-| CUPS          | `http://argon:631`                                  | Configuration and spool on NVMe               |
-| NetBird       | UDP 51820                                           | State on NVMe                                 |
-
-Service storage uses separate Unix groups so each daemon only receives the
-access it needs. Native services retain their upstream systemd hardening; only
-the user namespace isolation that prevents required host group access is
-overridden. Grimmory is the exception to the native-service approach because it
-is distributed as a container.
-
-The listed application ports are open on the server's LAN and NetBird
-interfaces.
+Immich, Paperless-ngx, Jellyfin, Navidrome, Grimmory, qBittorrent, Samba, CUPS,
+NetBird, Epson printer/scanner, backups, and Python automations are declared
+under `hosts/argon/` and `modules/`; their configuration is not duplicated here.
 
 ## Installation
 
-### 1. Prepare the installer and configuration
-
-Boot a NixOS 26.05 ISO in UEFI mode, then become root and confirm networking:
+Boot a NixOS 26.05 ISO in UEFI mode and become root:
 
 ```sh
 sudo -i
 ping -c 3 nixos.org
-```
-
-Clone this repository and pin its flake inputs:
-
-```sh
-git clone <YOUR_REPOSITORY_URL> /tmp/argon
+git clone <THIS_REPO_URL> /tmp/argon
 cd /tmp/argon
-nix --extra-experimental-features "nix-command flakes" flake lock
-git add flake.lock
 ```
 
-Staging the generated lock file makes it visible to Git-backed flake commands.
-If `/tmp/argon` came from an archive rather than Git, omit `git add`.
+### 1. Evaluate the configuration
 
-Evaluate the complete host configuration before changing any disks:
+`flake.lock` pins the exact input revisions used by this repository:
 
 ```sh
-nix --extra-experimental-features "nix-command flakes" eval \
-  .#nixosConfigurations.argon.config.system.build.toplevel.drvPath
+nix --extra-experimental-features "nix-command flakes" \
+  flake check --no-build
 ```
 
-### 2. Verify the three disk IDs
+### 2. Verify every disk
 
-Confirm that all configured IDs exist and match the expected model, size, and
+Do not continue until all three links resolve to the expected model, size, and
 serial number:
 
 ```sh
@@ -98,37 +59,92 @@ ls -l /dev/disk/by-id/ata-ST2000VX017-3CV102_WWD37CTW
 lsblk -o NAME,SIZE,MODEL,SERIAL,TYPE,FSTYPE,MOUNTPOINTS
 ```
 
-The HDD paths must identify the complete disks, not `-part1` links.
+The HDD links must refer to whole disks, not `-part1` links.
 
-### 3. Format and mount the NVMe
+### 3. Erase and mount the NVMe
 
-`hosts/argon/disko.nix` already targets:
-
-```text
-/dev/disk/by-id/nvme-WD_BLACK_SN850_Heatsink_1TB_21490K485613
-```
-
-The next command erases that NVMe. Run it only after checking the ID above:
+The following command destroys the configured NVMe:
 
 ```sh
-cd /tmp/argon
 nix --extra-experimental-features "nix-command flakes" \
-    --option http-connections 1 \
-    --option download-attempts 500 \
-    --option http2 false \
-    run .#disko -- \
-    --mode destroy,format,mount \
-    ./hosts/argon/disko.nix
+  --option http-connections 1 \
+  --option http2 false \
+  --option download-attempts 500 \
+  run .#disko -- \
+  --mode destroy,format,mount \
+  ./hosts/argon/disko.nix
+
 findmnt -R /mnt
 ```
 
-### 4. Mount the data RAID
+### 4. Prepare the data RAID
 
-Choose the new-array or existing-array path below.
+Choose exactly one of the following paths.
 
-#### New array: both HDDs are blank
+#### Preserve an existing RAID
 
-Inspect both disks without changing them:
+Check whether the installer assembled it automatically:
+
+```sh
+cat /proc/mdstat
+lsblk -f
+```
+
+If it is absent, assemble it:
+
+```sh
+mdadm --assemble --scan
+```
+
+If scanning cannot find it, use the two known members explicitly:
+
+```sh
+mdadm --assemble /dev/md/argon-data \
+  /dev/disk/by-id/ata-ST2000VX017-3CV102_WWD1ZSNZ \
+  /dev/disk/by-id/ata-ST2000VX017-3CV102_WWD37CTW
+```
+
+Stop and inspect `mdadm --examine` if assembly fails.
+
+Verify and mount the existing filesystem:
+
+```sh
+blkid | grep ARGON_DATA
+mkdir -p /mnt/srv/storage
+mount /dev/disk/by-label/ARGON_DATA /mnt/srv/storage
+findmnt /mnt/srv/storage
+```
+
+The configuration expects the ext4 label `ARGON_DATA`. If it differs, confirm
+the filesystem is the correct one before changing its label with `e2label` or
+change `hosts/argon/storage.nix` to its existing UUID.
+
+#### Create a new RAID or deliberately start over
+
+This path irreversibly destroys everything on both HDDs. Recheck the stable IDs
+and make sure no wanted data remains.
+
+For brand-new blank disks, skip directly to the inspection below. To discard an
+existing array, first unmount it if mounted, stop it, and clear both members:
+
+```sh
+findmnt /dev/md/argon-data || true
+# Run this only if the previous command shows /mnt/srv/storage:
+umount /mnt/srv/storage
+
+mdadm --stop /dev/md/argon-data
+mdadm --zero-superblock --force \
+  /dev/disk/by-id/ata-ST2000VX017-3CV102_WWD1ZSNZ
+mdadm --zero-superblock --force \
+  /dev/disk/by-id/ata-ST2000VX017-3CV102_WWD37CTW
+wipefs --all --force \
+  /dev/disk/by-id/ata-ST2000VX017-3CV102_WWD1ZSNZ
+wipefs --all --force \
+  /dev/disk/by-id/ata-ST2000VX017-3CV102_WWD37CTW
+udevadm settle
+```
+
+Confirm both disks are now blank:
 
 ```sh
 wipefs -n /dev/disk/by-id/ata-ST2000VX017-3CV102_WWD1ZSNZ
@@ -137,90 +153,40 @@ mdadm --examine /dev/disk/by-id/ata-ST2000VX017-3CV102_WWD1ZSNZ || true
 mdadm --examine /dev/disk/by-id/ata-ST2000VX017-3CV102_WWD37CTW || true
 ```
 
-Continue only if both complete disks are disposable and have no partitions,
-filesystem signatures, or mdadm metadata. The helper checks these conditions,
-asks for a typed confirmation, creates `/dev/md/argon-data`, and formats it as
-ext4 with the `ARGON_DATA` label:
+The guarded helper performs its own checks, asks for a typed confirmation, and
+creates the RAID1 and ext4 filesystem:
 
 ```sh
-cd /tmp/argon
 ./scripts/create-data-raid.sh \
   /dev/disk/by-id/ata-ST2000VX017-3CV102_WWD1ZSNZ \
   /dev/disk/by-id/ata-ST2000VX017-3CV102_WWD37CTW \
   --i-understand-this-erases-both-disks
-```
 
-Mount the new filesystem. Initial RAID synchronization may continue in the
-background during installation.
-
-```sh
 mkdir -p /mnt/srv/storage
 mount /dev/disk/by-label/ARGON_DATA /mnt/srv/storage
 findmnt /mnt/srv/storage
 cat /proc/mdstat
 ```
 
-#### Existing array: preserve its data
-
-Do not run the RAID creation helper or any `mkfs`, `wipefs`, or `mdadm --create`
-command. Check whether the installer assembled the array automatically:
-
-```sh
-cat /proc/mdstat
-```
-
-If it is absent, assemble and inspect it:
-
-```sh
-mdadm --assemble --scan
-cat /proc/mdstat
-mdadm --detail --scan
-lsblk -f
-```
-
-If scanning does not find it, supply the two existing members explicitly:
-
-```sh
-mdadm --assemble /dev/md/argon-data \
-  /dev/disk/by-id/ata-ST2000VX017-3CV102_WWD1ZSNZ \
-  /dev/disk/by-id/ata-ST2000VX017-3CV102_WWD37CTW
-```
-
-Stop and inspect `mdadm --examine` output if assembly fails. Do not try
-`--create` or `--force` as a recovery shortcut.
-
-Verify the filesystem label, then mount it:
-
-```sh
-blkid | grep ARGON_DATA
-mkdir -p /mnt/srv/storage
-mount /dev/disk/by-label/ARGON_DATA /mnt/srv/storage
-findmnt /mnt/srv/storage
-ls -la /mnt/srv/storage
-```
-
-If the existing filesystem has another label, either update
-`hosts/argon/storage.nix` to use its `/dev/disk/by-uuid/...` path or, after
-confirming it is the right ext4 filesystem, assign the expected label with
-`e2label`. Do not format it.
+Initial synchronization continues in the background.
 
 ### 5. Install NixOS
 
-Copy the evaluated configuration and lock file to the target system:
+Copy the same evaluated tree, including `flake.lock`, to the target:
 
 ```sh
 mkdir -p /mnt/etc/nixos
 rsync -a --delete /tmp/argon/ /mnt/etc/nixos/
 cd /mnt/etc/nixos
 test -f flake.lock
+
 nixos-install --flake .#argon \
   --option http-connections 1 \
   --option http2 false \
   --option download-attempts 500
 ```
 
-The initial `argon` account is locked because no default password is stored in
-Git. Set its password before rebooting:
+Set the initial `argon` password before rebooting:
 
 ```sh
 nixos-enter --root /mnt -c 'passwd argon'
@@ -229,170 +195,45 @@ reboot
 
 ## First boot
 
-Start with a quick system and storage check:
+Verify the system, bridge, storage, and integrated GPU:
 
 ```sh
 systemctl --failed
+networkctl status br0
+bridge link
 findmnt /srv/storage
 cat /proc/mdstat
+readlink -f /dev/dri/argon-igpu
+vainfo --display drm --device /dev/dri/argon-igpu
 ```
 
-### NetBird and SSH
+`br0` contains `enp2s0` through `enp5s0`; normally `enp2s0` is the uplink and
+the other three are switch ports. Any of the four can be the uplink, but connect
+only one to the upstream LAN. The temporary USB NIC `enp0s20f0u1` is excluded.
+Because this is a software switch, downstream devices disconnect when Argon is
+off or rebooting.
 
-Join the NetBird network and verify its interface:
+### Accounts and remote access
+
+Complete the setup that requires interactive credentials:
 
 ```sh
 sudo netbird up
 netbird status
-ip address show wt0
-```
-
-Password SSH login is enabled for setup. Add a public key to
-`hosts/argon/local.nix`, rebuild, and confirm both LAN and NetBird key-based
-sessions work. Then uncomment the `lib.mkForce false` password-authentication
-setting and rebuild again.
-
-```sh
-ssh argon@argon
-ssh argon@ARGON_NETBIRD_IP
-```
-
-### Samba
-
-Create Samba's separate password entry for `argon`:
-
-```sh
 sudo smbpasswd -a argon
-```
-
-The shares are `\\argon\files`, `\\argon\media`, and `\\argon\library`; replace
-the hostname with a LAN or NetBird IP if local name resolution is unavailable.
-
-### Arc A380, Immich, and Jellyfin
-
-Verify that the Arc A380 (`8086:56a5`) owns the stable render link:
-
-```sh
-lspci -nn | grep -Ei 'VGA|Display'
-ls -l /dev/dri /dev/dri/by-path
-readlink -f /dev/dri/argon-arc
-vainfo --display drm --device /dev/dri/argon-arc
-```
-
-If the link is missing, compare the PCI ID from `lspci` with the udev rule in
-`hosts/argon/hardware.nix`.
-
-Open Immich at `http://argon:2283`. Photos are stored under
-`/srv/storage/photos/immich`. Select Intel hardware acceleration in Immich's
-administration settings and test a video transcode.
-
-Open Jellyfin at `http://argon:8096` and add libraries from
-`/srv/storage/media`. Quick Sync, hardware encoding, and the selected codecs are
-seeded from the NixOS configuration. Confirm GPU use during a transcode with:
-
-```sh
-sudo intel_gpu_top
-```
-
-The Immich and Paperless PostgreSQL databases are dumped to
-`/srv/storage/backups/postgresql` every day at 03:15. The current and previous
-dumps are retained.
-
-```sh
-sudo systemctl status postgresqlBackup-immich.timer
-sudo systemctl status postgresqlBackup-paperless.timer
-sudo ls -lh /srv/storage/backups/postgresql
-```
-
-### qBittorrent
-
-Open `http://argon:8080`. On first launch, find the temporary Web UI password in
-the service log, sign in, and replace it:
-
-```sh
-sudo journalctl -u qbittorrent -b | grep -i password
-```
-
-Completed downloads go to `/srv/storage/downloads/complete`; incomplete ones go
-to `/srv/storage/downloads/incomplete`. Peer traffic uses TCP and UDP port 52000.
-
-### Epson ET-3950 printing and scanning
-
-The `Epson_ET_3950` CUPS queue is created automatically for the printer at
-`192.168.1.191`, uses driverless IPP Everywhere, defaults to A4, and is shared.
-Verify it after the first rebuild:
-
-```sh
-lpstat -t
-lpoptions -p Epson_ET_3950 -l
-printf 'Argon printer test\n' | lp -d Epson_ET_3950
-```
-
-Clients can use this queue directly:
-
-```text
-ipp://argon:631/printers/Epson_ET_3950
-```
-
-Use the NetBird IP or DNS name instead of `argon` for remote printing.
-
-Scanning uses the open-source `sane-airscan` backend. Confirm that the ET-3950
-is discovered and inspect the exact source names exposed by its firmware:
-
-```sh
-airscan-discover
-scanimage -L
-scanimage --help --device-name 'airscan:DEVICE_NAME_FROM_SCANIMAGE_L'
-```
-
-Load pages into the ADF and submit them as one 300-DPI grayscale PDF. Paperless
-will pick it up and OCR it automatically:
-
-```sh
-sudo paperless-scan
-```
-
-Choose another source or color mode when needed:
-
-```sh
-sudo paperless-scan 'ADF Duplex'
-sudo paperless-scan Flatbed
-sudo env PAPERLESS_SCAN_MODE=Color paperless-scan
-```
-
-If the firmware reports a different source name, pass that exact name as the
-first argument. An exact SANE device name can be supplied as the second argument
-when more than one scanner is present.
-
-The ET-3950 control panel offers scan-to-computer/cloud/WSD, but not SMB or FTP
-scan-to-folder. It therefore cannot send directly to Paperless from the panel
-using an open protocol. `paperless-scan` is the local bridge: it drives the
-scanner over eSCL and places the completed PDF in Paperless's consume directory.
-
-### Paperless-ngx
-
-Create the first administrator, then open `http://argon:28981`:
-
-```sh
 sudo paperless-manage createsuperuser
 ```
 
-Original documents are stored under `/srv/storage/documents/paperless`; the
-database and search index stay on NVMe. OCR recognizes German and English and
-runs one low-priority worker to avoid competing with interactive services.
+Password SSH is enabled only for bootstrap. Add your public key and enable the
+key-only settings shown in `hosts/argon/local.nix`, rebuild, and verify a second
+SSH session before closing the first.
 
-### Navidrome
+Immich, Navidrome, and Grimmory create their first administrators through their
+web interfaces.
 
-Put music in `/srv/storage/media/music` through the `\\argon\media` share, then
-open `http://argon:4533` and create the first administrator. Navidrome scans at
-startup and watches for later file changes; no periodic full-library scan is
-scheduled. Seven daily database backups are kept in
-`/srv/storage/backups/navidrome`.
+### Grimmory secrets
 
-### Grimmory
-
-Grimmory needs two root-only environment files. Generate matching application
-and database passwords on the server; do not add these files to Git:
+Grimmory remains stopped until its two root-only environment files exist:
 
 ```sh
 sudo install -d -m 0700 /var/lib/argon-secrets
@@ -409,266 +250,93 @@ printf 'MYSQL_PASSWORD=%s\nMYSQL_ROOT_PASSWORD=%s\n' \
   | sudo tee /var/lib/argon-secrets/grimmory-db.env >/dev/null
 unset db_password root_password
 
+sudo systemctl restart podman-grimmory-db.service
 sudo systemctl restart podman-grimmory.service
-sudo systemctl status podman-grimmory-db.service podman-grimmory.service
 ```
 
-The first start pulls the pinned Grimmory and MariaDB images. Open
-`http://argon:6060`, create the administrator, then create a library rooted at
-`/books`. Files copied to `\\argon\library\bookdrop` appear inside Grimmory at
-`/bookdrop`. The application and MariaDB state live in `/var/lib/grimmory`; a
-compressed database dump is kept for seven days under
-`/srv/storage/backups/grimmory`.
+Do not add these files to Git; Nix expressions and the Nix store are not secret
+storage.
 
-## Python automations
+### qBittorrent, printing, and scanning
 
-Each automation lives in `/home/argon/automation/<name>/main.py`. A hardened
-systemd template runs it with `uv`, so dependencies can come from a
-`pyproject.toml` or PEP 723 metadata instead of the global Python environment.
+Read qBittorrent's temporary first-login password, then replace it in the Web
+UI. Verify the automatically configured Epson ET-3950 and scanner:
 
 ```sh
-mkdir -p ~/automation/hello
-cp /etc/nixos/examples/automation/hello/main.py ~/automation/hello/main.py
-sudo systemctl start argon-automation@hello.service
-sudo journalctl -u argon-automation@hello.service
+sudo journalctl -u qbittorrent -b | grep -i password
+lpstat -t
+scanimage -L
 ```
 
-To schedule an automation, add a timer using the example in
-`hosts/argon/local.nix`, then rebuild.
-
-## Power policy
-
-The configuration enables Intel P-state with a power-focused energy preference,
-deep CPU idle states, supported PCIe ASPM, Powertop tuning, SATA link power
-management, audio power saving, periodic SSD trim, and zram. It does not enable
-`pcie_aspm=force` or HDD spindown by default because both need hardware-specific
-testing.
-
-CUPS starts on demand, Navidrome uses file events rather than timed scans, and
-Paperless OCR and overnight backups use low I/O priority. Grimmory and its
-MariaDB container add the largest always-on memory footprint, but should be
-CPU-idle when unused. Stop `podman-grimmory.service` and
-`podman-grimmory-db.service` if that library is only needed occasionally.
-
-After RAID synchronization and media indexing settle, measure the idle system:
+Send a scan to Paperless with one of:
 
 ```sh
-sudo powertop
-sudo turbostat --interval 5
-cat /sys/module/pcie_aspm/parameters/policy
-lspci -vv | grep -E 'LnkCap:|LnkCtl:|ASPM'
+sudo paperless-scan
+sudo paperless-scan 'ADF Duplex'  # optional duplex scan
+sudo paperless-scan Flatbed       # optional glass scan
 ```
 
-`hosts/argon/local.nix` contains an optional 30-minute HDD standby policy using
-the configured stable HDD IDs. Check actual access patterns and SMART start/stop
-counts before enabling it. If Powertop tuning causes device instability, disable
-`powerManagement.powertop.enable` first and retest.
+## Updating the configuration
 
-## Maintenance
-
-### Test and apply configuration changes
-
-Work from the configuration installed on the server. A tmux session lets a
-rebuild continue if SSH disconnects:
+Sync the repository and evaluate changes before activation. Stage newly created
+files because Git-backed flakes ignore untracked files.
 
 ```sh
-ssh argon@argon
 cd /etc/nixos
-tmux new -s nixos-change
+git pull --ff-only
 git status --short
 git diff
-```
-
-Modified tracked files are available to the flake immediately. Git-backed
-flakes ignore new, untracked files, so stage any new module before evaluating:
-
-```sh
-git add path/to/new-file.nix
-```
-
-Build the complete system without activating it, then preview the activation:
-
-```sh
 sudo nixos-rebuild build --flake .#argon
 sudo nixos-rebuild dry-activate --flake .#argon
 ```
 
-Temporarily activate the result:
+`test` activates temporarily; `switch` makes the tested generation persistent:
 
 ```sh
 sudo nixos-rebuild test --flake .#argon
-```
-
-`test` changes the running system without making it the boot default. A reboot
-returns to the last persistent generation. Keep local-console access available
-when testing SSH, firewall, networkd, or NetBird changes.
-
-Check the system and any service affected by the change:
-
-```sh
 sudo systemctl --failed
-sudo journalctl -b -p warning
-findmnt /srv/storage
-cat /proc/mdstat
-netbird status
-
-# Example for a changed service:
-sudo systemctl status jellyfin
-sudo journalctl -u jellyfin -b
-```
-
-Once the temporary configuration works, activate it and make it the default for
-future boots:
-
-```sh
 sudo nixos-rebuild switch --flake .#argon
 ```
 
-For a kernel, initrd, or bootloader change, install it as the next boot default
-without changing the running system, then reboot:
+Apply network, SSH, kernel, initrd, or bootloader changes from a local console
+with:
 
 ```sh
 sudo nixos-rebuild boot --flake .#argon
 sudo reboot
 ```
 
-Roll back the latest persistent switch with:
+Use `sudo nixos-rebuild switch --rollback` to roll back. Rebuilds never
+repartition the NVMe or recreate the RAID; the disko and RAID creation commands
+are installation-only. Update inputs deliberately with `nix flake update`, then
+build and test before switching.
 
-```sh
-sudo nixos-rebuild switch --rollback
-```
+## Health and backups
 
-Previous generations also remain available from the systemd-boot menu. Normal
-`nixos-rebuild` commands do not repartition the NVMe or create the HDD RAID.
-Never use the installation-time disko `destroy,format,mount` command for a
-routine configuration change.
-
-### Update pinned inputs
-
-Update deliberately and review the NixOS release notes first:
-
-```sh
-cd /etc/nixos
-sudo nix flake update
-sudo nixos-rebuild build --flake .#argon
-sudo nixos-rebuild switch --flake .#argon
-```
-
-Automatic upgrades are configured but disabled. Nix garbage collection runs
-weekly, SSD trim runs periodically, and the RAID consistency check and Btrfs
-scrub run monthly.
-
-### Storage health
+Check storage and idle behavior with:
 
 ```sh
 cat /proc/mdstat
 sudo mdadm --detail "$(findmnt -no SOURCE /srv/storage)"
 sudo smartctl -a /dev/disk/by-id/ata-ST2000VX017-3CV102_WWD1ZSNZ
 sudo smartctl -a /dev/disk/by-id/ata-ST2000VX017-3CV102_WWD37CTW
-sudo systemctl status smartd
-sudo journalctl -t mdadm
+sudo powertop
+sudo turbostat --interval 5
 ```
 
-mdadm events are logged under the `mdadm` journal tag. External alert delivery
-is not configured.
+A failed RAID member is replaced and rebuilt with mdadm; the surviving member
+must not be reformatted and the array must not be recreated. A `lost+found`
+directory at the root of the ext4 RAID is normal.
 
-When replacing a failed RAID member, take the array and member paths from
-`mdadm --detail`, verify the replacement disk's stable ID and physical serial,
-then fail/remove the old member and add the blank replacement. Monitor rebuild
-progress in `/proc/mdstat`.
-
-### Back up NVMe state before reinstalling
-
-The RAID survives the reinstall procedure; `/var` does not. Before erasing a
-working NVMe, create a current database dump and stop the services whose local
-state will be copied:
+Immich and Paperless database dumps and Grimmory/Navidrome backups are written
+to `/srv/storage/backups`. Before erasing a working NVMe, run the on-demand
+database jobs and separately back up any wanted state under `/var/lib`,
+`/home/argon/automation`, `/etc/nixos`, and `/var/lib/argon-secrets`:
 
 ```sh
 sudo systemctl start postgresqlBackup-immich.service
 sudo systemctl start postgresqlBackup-paperless.service
 sudo systemctl start grimmory-backup.service
-sudo systemctl status \
-  postgresqlBackup-immich.service \
-  postgresqlBackup-paperless.service \
-  grimmory-backup.service
-sudo systemctl stop \
-  immich-server.service \
-  immich-machine-learning.service \
-  paperless-scheduler.service \
-  paperless-consumer.service \
-  paperless-task-queue.service \
-  paperless-web.service \
-  jellyfin.service \
-  navidrome.service \
-  podman-grimmory.service \
-  podman-grimmory-db.service \
-  qbittorrent.service \
-  cups.service \
-  samba-smbd.service
 ```
 
-From a local console or LAN session, NetBird can also be stopped for a
-consistent copy. Do not stop it from a NetBird-only session.
-
-```sh
-sudo systemctl stop netbird.service
-```
-
-Copy the relevant state to a dated directory on the RAID:
-
-```sh
-backup="/srv/storage/backups/pre-reinstall-$(date +%F)"
-sudo install -d -m 0700 "$backup"
-sudo rsync -aHAXR --numeric-ids --ignore-missing-args \
-  /./etc/nixos \
-  /./home/argon/automation \
-  /./var/lib/immich \
-  /./var/lib/paperless \
-  /./var/lib/jellyfin \
-  /./var/cache/jellyfin \
-  /./var/lib/navidrome \
-  /./var/lib/grimmory \
-  /./var/lib/argon-secrets \
-  /./var/lib/qBittorrent \
-  /./var/lib/cups \
-  /./var/cache/cups \
-  /./var/spool/cups \
-  /./var/lib/samba \
-  /./var/lib/netbird \
-  "$backup/"
-```
-
-Restart the stopped services if the old installation will remain online.
-Restore Immich and Paperless from their logical PostgreSQL dumps. Restore other
-state directories only while their services are stopped. The copied
-`argon-secrets` directory contains credentials and must remain root-only.
-
-`restic` and `rclone` are installed for a future off-site backup, but no remote,
-credentials, schedule, or retention policy is configured yet. At minimum, back
-up irreplaceable RAID data, PostgreSQL dumps, automation scripts, and selected
-NVMe service configuration, then test restores.
-
-## Repository map
-
-| Path                          | Role                                                     |
-| ----------------------------- | -------------------------------------------------------- |
-| `flake.nix`                   | Inputs and `argon` host definition                       |
-| `hosts/argon/disko.nix`       | Destructive NVMe layout; never contains the HDDs         |
-| `hosts/argon/storage.nix`     | Non-destructive RAID mount, permissions, and health jobs |
-| `hosts/argon/services.nix`    | Core applications and automation runner                  |
-| `hosts/argon/documents.nix`   | Paperless-ngx and document ingestion                     |
-| `hosts/argon/library.nix`     | Navidrome and Grimmory                                   |
-| `hosts/argon/printing.nix`    | Epson printer and network scanner                        |
-| `hosts/argon/hardware.nix`    | Intel CPU and Arc A380 support                           |
-| `hosts/argon/local.nix`       | Host-specific examples and overrides                     |
-| `modules/power.nix`           | Low-power policy                                         |
-| `scripts/paperless-scan.sh`   | Scan-to-Paperless workflow                               |
-| `scripts/create-data-raid.sh` | Guarded, one-time RAID1 creation                         |
-
-Further reading: [NixOS manual](https://nixos.org/manual/nixos/stable/),
-[disko](https://github.com/nix-community/disko),
-[NetBird](https://docs.netbird.io/), [Immich](https://immich.app/docs/), and
-[Jellyfin Intel acceleration](https://jellyfin.org/docs/general/post-install/transcoding/hardware-acceleration/intel/),
-[Paperless-ngx](https://docs.paperless-ngx.com/),
-[Navidrome](https://www.navidrome.org/docs/), and
-[Grimmory](https://grimmory.org/docs/).
+The RAID itself still needs an independent backup for irreplaceable files.

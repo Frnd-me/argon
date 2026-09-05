@@ -28,19 +28,18 @@
   hardware.enableRedistributableFirmware = true;
   hardware.graphics = {
     enable = true;
-    # media-driver provides Intel QSV/VA-API; compute-runtime provides OpenCL
-    # used by media workloads such as tone mapping on the Arc A380.
-    extraPackages = with pkgs; [
-      intel-media-driver
-      intel-compute-runtime
-    ];
+    # The iHD media driver provides VA-API and Quick Sync support for the
+    # i3-9100T's integrated UHD 630.
+    extraPackages = with pkgs; [ intel-media-driver ];
   };
 
   # This headless wired server has no Bluetooth workload or daemon.
   hardware.bluetooth.enable = false;
 
-  # Stable device name for the Arc A380 (PCI device ID 8086:56a5).
+  # The integrated GPU is always at PCI 0000:00:02.0 on this platform. Give its
+  # render node a stable name so service configuration is independent of DRM
+  # card enumeration order.
   services.udev.extraRules = ''
-    SUBSYSTEM=="drm", KERNEL=="renderD*", ATTRS{vendor}=="0x8086", ATTRS{device}=="0x56a5", SYMLINK+="dri/argon-arc"
+    SUBSYSTEM=="drm", KERNEL=="renderD*", KERNELS=="0000:00:02.0", SYMLINK+="dri/argon-igpu"
   '';
 }
