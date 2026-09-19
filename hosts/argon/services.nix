@@ -181,31 +181,45 @@ in
   # slow RAID cannot redirect writes into the NVMe mountpoint directory.
   systemd.services = {
     immich-server = {
-      unitConfig.RequiresMountsFor = [ "/srv/storage" ];
+      unitConfig = {
+        RequiresMountsFor = [ "/srv/storage" ];
+      };
       # The upstream module enables PrivateUsers. Disable only this sandboxing
       # feature so the host render/video/photos groups remain usable.
       serviceConfig.PrivateUsers = lib.mkForce false;
     };
     jellyfin = {
-      unitConfig.RequiresMountsFor = [ "/srv/storage" ];
+      unitConfig = {
+        RequiresMountsFor = [ "/srv/storage" ];
+      };
       # Jellyfin likewise needs the host media/render/video group mappings.
       serviceConfig.PrivateUsers = lib.mkForce false;
     };
     qbittorrent = {
-      unitConfig.RequiresMountsFor = [ "/srv/storage" ];
+      unitConfig = {
+        RequiresMountsFor = [ "/srv/storage" ];
+      };
       serviceConfig = {
         ExecStartPre = qbitInitialize;
         UMask = "0002";
       };
     };
-    samba-smbd.unitConfig.RequiresMountsFor = [ "/srv/storage" ];
-    "postgresqlBackup-immich".unitConfig.RequiresMountsFor = [ "/srv/storage" ];
-    "postgresqlBackup-paperless".unitConfig.RequiresMountsFor = [ "/srv/storage" ];
+    samba-smbd.unitConfig = {
+      RequiresMountsFor = [ "/srv/storage" ];
+    };
+    "postgresqlBackup-immich".unitConfig = {
+      RequiresMountsFor = [ "/srv/storage" ];
+    };
+    "postgresqlBackup-paperless".unitConfig = {
+      RequiresMountsFor = [ "/srv/storage" ];
+    };
 
     # Each automation gets a read-only host view plus explicit writable paths.
     "argon-automation@" = {
       description = "Argon Python automation %i";
-      unitConfig.RequiresMountsFor = [ "/srv/storage" ];
+      unitConfig = {
+        RequiresMountsFor = [ "/srv/storage" ];
+      };
       path = with pkgs; [
         coreutils
         cups

@@ -4,6 +4,8 @@
     ./disko.nix
     ./hardware.nix
     ./storage.nix
+    ./backup.nix
+    ./recovery.nix
     ./services.nix
     ./documents.nix
     ./library.nix

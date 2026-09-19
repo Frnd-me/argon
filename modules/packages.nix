@@ -25,6 +25,7 @@
     tree
     uv
     wget
+    zstd
 
     # turbostat is built from the selected kernel package set.
     linuxPackages.turbostat

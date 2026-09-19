@@ -44,13 +44,17 @@ in
   # OCR is batch work: let interactive and media workloads win CPU and disk
   # contention without disabling automatic document processing.
   systemd.services = {
-    paperless-consumer.serviceConfig = {
-      Nice = 10;
-      IOSchedulingClass = "idle";
+    paperless-consumer = {
+      serviceConfig = {
+        Nice = 10;
+        IOSchedulingClass = "idle";
+      };
     };
-    paperless-task-queue.serviceConfig = {
-      Nice = 10;
-      IOSchedulingClass = "idle";
+    paperless-task-queue = {
+      serviceConfig = {
+        Nice = 10;
+        IOSchedulingClass = "idle";
+      };
     };
   };
 }

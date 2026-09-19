@@ -168,7 +168,9 @@ in
       requires = [ "grimmory-network.service" ];
       after = [ "grimmory-network.service" ];
       unitConfig = {
-        ConditionPathExists = grimmoryAppSecret;
+        ConditionPathExists = [
+          grimmoryAppSecret
+        ];
         RequiresMountsFor = [
           "/var/lib/grimmory/data"
           "/srv/storage"
@@ -202,7 +204,9 @@ in
       requires = [ "podman-grimmory-db.service" ];
       after = [ "podman-grimmory-db.service" ];
       unitConfig = {
-        ConditionPathExists = grimmoryDbSecret;
+        ConditionPathExists = [
+          grimmoryDbSecret
+        ];
         RequiresMountsFor = [ "/srv/storage" ];
       };
       serviceConfig = {
@@ -213,7 +217,9 @@ in
       };
     };
     services.navidrome = {
-      unitConfig.RequiresMountsFor = [ "/srv/storage" ];
+      unitConfig = {
+        RequiresMountsFor = [ "/srv/storage" ];
+      };
       serviceConfig.PrivateUsers = lib.mkForce false;
     };
     timers.grimmory-backup = {
